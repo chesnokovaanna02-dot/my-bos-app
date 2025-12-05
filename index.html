@@ -1,1 +1,156 @@
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Дистанционный БОС</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      padding: 1.5rem;
+      background: #f8f9fa;
+      color: #333;
+    }
+    h1 { text-align: center; margin-bottom: 1rem; }
+    .controls {
+      text-align: center;
+      margin: 1rem 0;
+    }
+    button {
+      padding: 0.6rem 1.2rem;
+      margin: 0 0.5rem;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    .status {
+      text-align: center;
+      margin: 1rem;
+      min-height: 1.4em;
+      font-weight: bold;
+    }
+    .chart-container {
+      position: relative;
+      height: 300px;
+      margin: 1.5rem 0;
+    }
+    .values {
+      display: flex;
+      justify-content: space-around;
+      font-size: 1.2rem;
+      margin: 1rem 0;
+    }
+    .value { font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Дистанционный БОС (Arduino + USB)</h1>
+  
+  <div class="controls">
+    <button id="connect">Подключить Arduino</button>
+    <button id="stop">Остановить</button>
+    <button id="export">Экспорт в CSV</button>
+  </div>
+
+  <div class="status" id="status">Готово к подключению</div>
+
+  <div class="values">
+    <div>Пульс: <span id="hr" class="value">—</span> уд/мин</div>
+    <div>RMSSD: <span id="hrv" class="value">—</span> мс</div>
+    <div>ГКС: <span id="gsr" class="value">—</span> у.е.</div>
+  </div>
+
+  <div class="chart-container">
+    <canvas id="chart"></canvas>
+  </div>
+
+  <script>
+    // === Хранилище данных ===
+    const dataStore = {
+      timestamps: [],
+      bpm: [],
+      rmssd: [],
+      gsr: []
+    };
+
+    // === DOM-элементы ===
+    const connectBtn = document.getElementById('connect');
+    const stopBtn = document.getElementById('stop');
+    const exportBtn = document.getElementById('export');
+    const statusDiv = document.getElementById('status');
+    const hrDiv = document.getElementById('hr');
+    const hrvDiv = document.getElementById('hrv');
+    const gsrDiv = document.getElementById('gsr');
+
+    // === Chart.js ===
+    const ctx = document.getElementById('chart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: dataStore.timestamps,
+        datasets: [
+          {
+            label: 'Пульс (bpm)',
+            data: dataStore.bpm,
+            borderColor: '#4e73df',
+            backgroundColor: 'rgba(78, 115, 223, 0.1)',
+            tension: 0.3,
+            spanGaps: true
+          },
+          {
+            label: 'RMSSD (мс)',
+            data: dataStore.rmssd,
+            borderColor: '#1cc88a',
+            backgroundColor: 'rgba(28, 200, 138, 0.1)',
+            tension: 0.3,
+            spanGaps: true
+          },
+          {
+            label: 'ГКС (у.е.)',
+            data: dataStore.gsr,
+            borderColor: '#f6c23e',
+            backgroundColor: 'rgba(246, 194, 62, 0.1)',
+            tension: 0.3,
+            spanGaps: true
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          x: { display: true, title: { display: true, text: 'Время' } },
+          y: { display: true, title: { display: true, text: 'Значения' } }
+        },
+        plugins: {
+          legend: { position: 'top' }
+        }
+      }
+    });
+
+    // === Подключение к Arduino ===
+    let reader;
+    let inputStream;
+    let isReading = false;
+
+    async function connectToArduino() {
+      if (!('serial' in navigator)) {
+        statusDiv.textContent = 'Web Serial не поддерживается (требуется Chrome/Edge)';
+        return;
+      }
+
+      try {
+        const port = await navigator.serial.requestPort({
+          filters: [
+            { usbVendorId: 0x1a86, usbProductId: 0x7523 }, // CH340
+            { usbVendorId: 0x10c4, usbProductId: 0xea60 }  // CP2102
+          ]
+        });
+
+        await port.open({ baudRate: 115200 });
+        inputStream = port.readable;
+        reader = inputStream.getReader();
+        isReading = true;
+        connectBtn.disabled = true;
+        statusDiv.textContent = 'Подключено
